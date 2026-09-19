@@ -1,0 +1,129 @@
+name: Deploy Servidor Web Java
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Compilar aplicação
+        run: javac App.java
+
+      - name: Preparar chave SSH
+        run: |
+          echo "${{ secrets.KEY }}" > /tmp/private_key
+          chmod 600 /tmp/private_key
+
+      - name: Preparar diretório temporário no servidor
+        run: |
+          ssh \
+            -i /tmp/private_key \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            ubuntu@${{ secrets.HOST }} \
+            "rm -rf /tmp/appdemo1-new && mkdir -p /tmp/appdemo1-new"
+
+      - name: Enviar nova versão
+        run: |
+          scp \
+            -i /tmp/private_key \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            App.java App.class \
+            ubuntu@${{ secrets.HOST }}:/tmp/appdemo1-new/
+
+      - name: Realizar backup da aplicação atual
+        run: |
+          ssh \
+            -i /tmp/private_key \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            ubuntu@${{ secrets.HOST }} << 'EOF'
+
+          set -e
+
+          mkdir -p /home/ubuntu/backups
+
+          BACKUP="/home/ubuntu/backups/appdemo1-$(date +%Y%m%d-%H%M%S).tar.gz"
+
+          tar -czf "$BACKUP" \
+            -C /home/ubuntu \
+            appdemo1
+
+          echo "Backup criado em $BACKUP"
+
+          EOF
+
+      - name: Publicar nova versão
+        run: |
+          ssh \
+            -i /tmp/private_key \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            ubuntu@${{ secrets.HOST }} << 'EOF'
+
+          set -e
+
+          sudo systemctl stop appdemo1
+
+          cp /tmp/appdemo1-new/App.java \
+             /home/ubuntu/appdemo1/App.java
+
+          cp /tmp/appdemo1-new/App.class \
+             /home/ubuntu/appdemo1/App.class
+
+          sudo systemctl start appdemo1
+
+          sleep 3
+
+          sudo systemctl is-active --quiet appdemo1
+
+          curl --fail http://localhost:3000 > /dev/null
+
+          rm -rf /tmp/appdemo1-new
+
+          echo "Deploy concluído com sucesso."
+
+          EOF
+
+      - name: Remover chave SSH temporária
+        if: always()
+        run: |
+          rm -f /tmp/private_key
+
+      - name: Notificar sucesso no Discord
+        if: success()
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          curl \
+            -H "Content-Type: application/json" \
+            -d "{\"content\":\"✅ Deploy realizado com sucesso!\nAplicação: Servidor Web Java\nCommit: ${{ github.sha }}\"}" \
+            "$DISCORD_WEBHOOK"
+
+      - name: Notificar erro no Discord
+        if: failure()
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          curl \
+            -H "Content-Type: application/json" \
+            -d "{\"content\":\"❌ Erro no deploy!\nAplicação: Servidor Web Java\nCommit: ${{ github.sha }}\nVerifique o GitHub Actions.\"}" \
+            "$DISCORD_WEBHOOK"
