@@ -42,7 +42,7 @@ public class App {
                     <title>Servidor Web Java</title>
                 </head>
                 <body>
-                    <h1>Hello World!</h1>
+                    <h1>World!</h1>
                     <h2>Aplicacao Web em Java</h2>
                     <p>Servidor: %s</p>
                     <p>Data/Hora: %s</p>
